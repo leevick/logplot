@@ -1,0 +1,178 @@
+# Comprehensive test log demonstrating all features of logplot
+# =======================================================================
+
+# ========================================
+# DEFAULT SUBPLOT (no tags)
+# ========================================
+# Multi-label series showing linear progression
+[baseline][target][measured] 0x0 0x0 0x0 0x0
+[baseline][target][measured] 0x100 0x100 0x100 0x105
+[baseline][target][measured] 0x200 0x200 0x200 0x210
+[baseline][target][measured] 0x300 0x300 0x300 0x315
+[baseline][target][measured] 0x400 0x400 0x400 0x420
+
+# Single label series
+[error] 0x50 0x10
+[error] 0x150 0x15
+[error] 0x250 0x20
+[error] 0x350 0x25
+
+# Vertical marker in default subplot
+[threshold_min] x 0x180
+[threshold_max] x 0x380
+
+# Horizontal marker in default subplot
+[limit_low] y 0x80
+[limit_high] y 0x380
+
+# XY crosshair in default subplot
+[calibration_point] xy 0x200 0x200
+
+
+# ========================================
+# PERFORMANCE SUBPLOT <perf> column
+# ========================================
+<perf>[throughput][latency] 0x0 0x0 0x1000
+<perf>[throughput][latency] 0x64 0x320 0x900
+<perf>[throughput][latency] 0xc8 0x640 0x800
+<perf>[throughput][latency] 0x12c 0x960 0x700
+<perf>[throughput][latency] 0x190 0xc80 0x600
+<perf>[throughput][latency] 0x1f4 0xfa0 0x500
+<perf>[throughput][latency] 0x258 0x12c0 0x450
+<perf>[throughput][latency] 0x2bc 0x15e0 0x420
+
+# Performance targets
+<perf>[perf_target] x 0x200
+<perf>[max_latency] y 0x800
+
+# Optimal point marker
+<perf>[optimal] xy 0x1f4 0x500
+
+
+# ========================================
+# QUALITY SUBPLOT <quality> column
+# ========================================
+<quality>[video_quality][audio_quality] 0x0 0x32 0x28
+<quality>[video_quality][audio_quality] 0xa 0x50 0x46
+<quality>[video_quality][audio_quality] 0x14 0x6e 0x64
+<quality>[video_quality][audio_quality] 0x1e 0x78 0x6e
+<quality>[video_quality][audio_quality] 0x28 0x82 0x78
+<quality>[video_quality][audio_quality] 0x32 0x8c 0x82
+<quality>[video_quality][audio_quality] 0x3c 0x96 0x8c
+<quality>[video_quality][audio_quality] 0x46 0x96 0x8c
+
+# Quality thresholds
+<quality>[min_acceptable] x 0x20
+<quality>[target_video] y 0x80
+<quality>[target_audio] y 0x70
+
+
+# ========================================
+# MEMORY SUBPLOT - ROW <mem>
+# ========================================
+[heap_used][stack_used]<mem> 0x0 0x0 0x0
+[heap_used][stack_used]<mem> 0x1000 0x800 0x100
+[heap_used][stack_used]<mem> 0x2000 0x1200 0x150
+[heap_used][stack_used]<mem> 0x3000 0x1a00 0x180
+[heap_used][stack_used]<mem> 0x4000 0x2400 0x1c0
+[heap_used][stack_used]<mem> 0x5000 0x2e00 0x200
+[heap_used][stack_used]<mem> 0x6000 0x3600 0x220
+
+# Memory limits
+[heap_limit]<mem> y 0x3000
+[stack_limit]<mem> y 0x250
+
+# Critical memory point
+[mem_warning]<mem> xy 0x5000 0x2e00
+
+
+# ========================================
+# TEMPERATURE SUBPLOT - ROW <temp>
+# ========================================
+[cpu_temp][gpu_temp][board_temp]<temp> 0x0 0x1e 0x1e 0x19
+[cpu_temp][gpu_temp][board_temp]<temp> 0x3c 0x28 0x2d 0x1e
+[cpu_temp][gpu_temp][board_temp]<temp> 0x78 0x32 0x3c 0x23
+[cpu_temp][gpu_temp][board_temp]<temp> 0xb4 0x3c 0x4b 0x28
+[cpu_temp][gpu_temp][board_temp]<temp> 0xf0 0x46 0x5a 0x2d
+[cpu_temp][gpu_temp][board_temp]<temp> 0x12c 0x50 0x69 0x32
+[cpu_temp][gpu_temp][board_temp]<temp> 0x168 0x5a 0x6e 0x37
+
+# Temperature thresholds
+[thermal_warning]<temp> y 0x55
+[thermal_critical]<temp> y 0x6e
+
+
+# ========================================
+# COMBINED SUBPLOT <perf><mem>
+# ========================================
+<perf>[memory_throughput][dma_latency]<mem> 0x0 0x0 0x50
+<perf>[memory_throughput][dma_latency]<mem> 0x500 0x200 0x48
+<perf>[memory_throughput][dma_latency]<mem> 0xa00 0x400 0x40
+<perf>[memory_throughput][dma_latency]<mem> 0xf00 0x600 0x38
+<perf>[memory_throughput][dma_latency]<mem> 0x1400 0x800 0x30
+<perf>[memory_throughput][dma_latency]<mem> 0x1900 0xa00 0x28
+<perf>[memory_throughput][dma_latency]<mem> 0x1e00 0xc00 0x25
+
+# Combined thresholds
+<perf>[bandwidth_target]<mem> x 0x1000
+<perf>[latency_target]<mem> y 0x30
+
+
+# ========================================
+# COMBINED SUBPLOT <quality><temp>
+# ========================================
+<quality>[encoding_quality]<temp> 0x14 0x50
+<quality>[encoding_quality]<temp> 0x28 0x5a
+<quality>[encoding_quality]<temp> 0x3c 0x6e
+<quality>[encoding_quality]<temp> 0x50 0x82
+<quality>[encoding_quality]<temp> 0x64 0x8c
+<quality>[encoding_quality]<temp> 0x78 0x8c
+
+# Quality-temp relationship marker
+<quality>[sweet_spot]<temp> xy 0x50 0x82
+
+
+# ========================================
+# WILDCARD MARKERS - Applied across columns/rows
+# ========================================
+
+# Vertical line across entire performance column (all rows with perf x-axis)
+<perf>[critical_perf]<> x 0x2bc
+
+# Horizontal line across entire memory row (all columns with mem y-axis)
+<>[mem_max]<mem> y 0x4000
+
+# Vertical line across entire quality column
+<quality>[quality_sweet_spot]<> x 0x3c
+
+# Horizontal line across entire temperature row
+<>[max_safe_temp]<temp> y 0x64
+
+
+# ========================================
+# XY FORMAT - Explicit coordinate specification
+# ========================================
+[checkpoint_1] xy 0x100 0x100
+[checkpoint_2] xy 0x300 0x300
+
+<perf>[perf_checkpoint] xy 0x190 0xc80
+
+<quality>[quality_checkpoint] xy 0x28 0x78
+
+
+# ========================================
+# STRESS TEST - High frequency data
+# ========================================
+[rapid_sample] 0x0 0x0
+[rapid_sample] 0x10 0x20
+[rapid_sample] 0x20 0x38
+[rapid_sample] 0x30 0x48
+[rapid_sample] 0x40 0x50
+[rapid_sample] 0x50 0x55
+[rapid_sample] 0x60 0x58
+[rapid_sample] 0x70 0x5a
+[rapid_sample] 0x80 0x5c
+[rapid_sample] 0x90 0x5d
+[rapid_sample] 0xa0 0x5e
+
+# End of comprehensive test log

@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""Generic XY plotter for logs.
+
+Parses generic log lines of the form:
+    [label] 0xX 0xY  (hexadecimal with mandatory lowercase 0x prefix)
+    [label] xy 0xX 0xY  (draws crossing vertical and horizontal lines at X and Y)
+and marker lines with subplot support:
+    [label] x 0xX           - vertical line in default subplot
+    <x1>[label] x 0xX       - vertical line in x1 column, default row
+    <x1>[label]<y1> x 0xX   - vertical line in specific x1,y1 subplot
+    <x1>[label]<> x 0xX     - vertical line across all subplots in x1 column
+    
+    Similar syntax for horizontal lines (y) and crosshairs (xy)
+
+Supports subplot organization using optional tags:
+    <x_label>[label1][label2]<y_label> 0xX 0xY1 0xY2
+    
+Where <x_label> and <y_label> determine subplot placement:
+    - Each unique x_label gets its own column
+    - Each unique y_label gets its own row
+    - Omitted labels default to empty string (column 0 / row 0)
+    - Empty angle brackets <> act as wildcard (apply to all subplots in that dimension)
+
+It groups step pairs by `label` and plots X on the horizontal axis and Y on the vertical axis.
+
+
+Usage: logplot /path/to/logfile
+"""
+import re
+import sys
+import argparse
+from pathlib import Path
+
+try:
+    import matplotlib.pyplot as plt
+except Exception as e:
+    print("matplotlib is required: pip install matplotlib", file=sys.stderr)
+    raise
+
+
+MARKER_RE = re.compile(r"\[A\]\s+MARK\s+0x([0-9A-Fa-f]+)")
+
+# Generic patterns with optional subplot tags:
+# Supports: <x_label>[label]<y_label> x/y/xy value
+# Use <> for wildcard (apply to all subplots in that dimension)
+VERTICAL_RE = re.compile(r"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s*x\s*0x(?P<val>[0-9A-Fa-f]+)")
+HORIZONTAL_RE = re.compile(r"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s*y\s*0x(?P<val>[0-9A-Fa-f]+)")
+XY_RE = re.compile(r"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s+xy\s+0x(?P<x>[0-9A-Fa-f]+)\s+0x(?P<y>[0-9A-Fa-f]+)")
+STEP_RE = re.compile(r"\[(?P<label>[A-Za-z0-9_]+)\]\s+0x(?P<x>[0-9A-Fa-f]+)\s+0x(?P<y>[0-9A-Fa-f]+)")
+
+
+def extract_subplot_labels(match, line):
+    """Extract x and y labels from regex match, converting <> to wildcard '*'."""
+    x_label = match.group('xlabel') if match.group('xlabel') is not None else None
+    y_label = match.group('ylabel') if match.group('ylabel') is not None else None
+    
+    # Check if angle brackets were present with empty content (wildcard <>)
+    if x_label is not None and x_label == '':
+        # Check if there's a <> before the [label]
+        if re.search(r'<>\s*\[', line):
+            x_label = '*'
+            
+    if y_label is not None and y_label == '':
+        # Check if there's a <> after the [label]
+        if re.search(r'\]\s*<>\s*(x|y|xy)', line):
+            y_label = '*'
+    
+    # Convert None to empty string for default subplot
+    x_label = x_label if x_label is not None else ''
+    y_label = y_label if y_label is not None else ''
+    
+    return (x_label, y_label)
+
+
+def parse_log(path):
+    # Collect parsed generic items
+    # step_series: { (x_label, y_label): { series_label: [(x, y), ...] } }
+    step_series = {}
+    # For markers, use special '*' to indicate "apply to all"
+    vertical_lines = {}    # { (x_label, y_label): [(x, label), ...] } where label can be '*' for wildcard
+    horizontal_lines = {}  # { (x_label, y_label): [(y, label), ...] }
+    xy_crosshairs = {}     # { (x_label, y_label): [(x, y, label), ...] }
+    markers = {}
+
+    with open(path, 'r', errors='ignore') as f:
+        for line in f:
+            # Generic marker lines (always in default subplot)
+            mm = MARKER_RE.search(line)
+            if mm:
+                marker_s = mm.group(1)
+                if marker_s.lower() not in {"ffffffff", "ffffffffffffffff"}:
+                    try:
+                        marker_h = int(marker_s, 16)
+                        subplot_key = ('', '')
+                        markers.setdefault(subplot_key, []).append(marker_h)
+                    except ValueError:
+                        pass
+                continue
+
+            # Vertical single-value entries with subplot tags: <x_label>[label]<y_label> x 0xHEX
+            vm = VERTICAL_RE.search(line)
+            if vm:
+                lbl = vm.group('label')
+                val_s = vm.group('val')
+                subplot_key = extract_subplot_labels(vm, line)
+                if val_s.lower() not in {"ffffffff", "ffffffffffffffff"}:
+                    try:
+                        v = int(val_s, 16)
+                        v_val = v
+                        vertical_lines.setdefault(subplot_key, []).append((v_val, lbl))
+                    except ValueError:
+                        pass
+                continue
+
+            # Horizontal single-value entries with subplot tags: <x_label>[label]<y_label> y 0xHEX
+            hm = HORIZONTAL_RE.search(line)
+            if hm:
+                lbl = hm.group('label')
+                val_s = hm.group('val')
+                subplot_key = extract_subplot_labels(hm, line)
+                if val_s.lower() not in {"ffffffff", "ffffffffffffffff"}:
+                    try:
+                        v = int(val_s, 16)
+                        v_val = v
+                        horizontal_lines.setdefault(subplot_key, []).append((v_val, lbl))
+                    except ValueError:
+                        pass
+                continue
+
+            # XY point entries with subplot tags: <x_label>[label]<y_label> xy 0xX 0xY
+            xym = XY_RE.search(line)
+            if xym:
+                lbl = xym.group('label')
+                x_s = xym.group('x')
+                y_s = xym.group('y')
+                subplot_key = extract_subplot_labels(xym, line)
+                if x_s.lower() in {"ffffffff", "ffffffffffffffff"} or y_s.lower() in {"ffffffffffffffff"}:
+                    continue
+                try:
+                    x_h = int(x_s, 16)
+                    y_h = int(y_s, 16)
+                    x_val = x_h
+                    y_val = y_h
+                    xy_crosshairs.setdefault(subplot_key, []).append((x_val, y_val, lbl))
+                except ValueError:
+                    pass
+                continue
+
+            # Multi-label lines with optional subplot tags: <x_label>[lbl1][lbl2]<y_label> 0xX 0xY1 0xY2 ...
+            # Pattern: optional <x_label>, one or more [label], optional <y_label>, then hex values
+            ml_match = re.match(r'(?:<(?P<xlabel>[A-Za-z0-9_]+)>)?((?:\[[A-Za-z0-9_]+\])+)(?:<(?P<ylabel>[A-Za-z0-9_]+)>)?(?:\s+0x[0-9A-Fa-f]+)+', line)
+            if ml_match:
+                x_label = ml_match.group('xlabel') or ''  # default subplot
+                y_label = ml_match.group('ylabel') or ''  # default subplot
+                subplot_key = (x_label, y_label)
+                
+                labels = re.findall(r'\[([A-Za-z0-9_]+)\]', ml_match.group(2))
+                hexs = re.findall(r'0x([0-9A-Fa-f]+)', line)
+                if len(hexs) >= 2 and labels:
+                    x_s = hexs[0]
+                    ys_s = hexs[1:]
+                    sentinels = {"ffffffff", "ffffffffffffffff"}
+                    count = min(len(labels), len(ys_s))
+                    for i in range(count):
+                        lbl = labels[i]
+                        y_s = ys_s[i]
+                        if x_s.lower() in sentinels or y_s.lower() in sentinels:
+                            continue
+                        try:
+                            x_h = int(x_s, 16)
+                            y_h = int(y_s, 16)
+                            x_val = x_h
+                            y_val = y_h
+                            if subplot_key not in step_series:
+                                step_series[subplot_key] = {}
+                            step_series[subplot_key].setdefault(lbl, []).append((x_val, y_val))
+                        except ValueError:
+                            continue
+                    continue
+
+            # Step-style entries: [label] 0xX 0xY (default subplot)
+            sm = STEP_RE.search(line)
+            if sm:
+                lbl = sm.group('label')
+                x_s = sm.group('x')
+                y_s = sm.group('y')
+                if x_s.lower() in {"ffffffff", "ffffffffffffffff"} or y_s.lower() in {"ffffffffffffffff"}:
+                    continue
+                try:
+                    x_h = int(x_s, 16)
+                    y_h = int(y_s, 16)
+                    x_val = x_h
+                    y_val = y_h
+                    subplot_key = ('', '')
+                    if subplot_key not in step_series:
+                        step_series[subplot_key] = {}
+                    step_series[subplot_key].setdefault(lbl, []).append((x_val, y_val))
+                except ValueError:
+                    pass
+                continue
+
+    return {
+        'step_series': step_series,
+        'vertical_lines': vertical_lines,
+        'horizontal_lines': horizontal_lines,
+        'xy_crosshairs': xy_crosshairs,
+        'markers': markers,
+    }
+
+
+def plot_data(data, out_file=None, show=True, align_axes=True):
+    step_series = data.get('step_series', {})
+    markers = data.get('markers', {})
+    vertical_lines = data.get('vertical_lines', {})
+    horizontal_lines = data.get('horizontal_lines', {})
+    xy_crosshairs = data.get('xy_crosshairs', {})
+
+    # Determine unique x and y labels to create subplot grid (exclude wildcards)
+    all_keys = set(step_series.keys())
+    # Only include non-wildcard keys for grid determination
+    grid_keys = {k for k in all_keys if '*' not in k}
+    
+    if not grid_keys:
+        print("No data to plot")
+        return
+    
+    x_labels = sorted(set(k[0] for k in grid_keys))
+    y_labels = sorted(set(k[1] for k in grid_keys))
+    
+    # Create mapping from label to index
+    x_label_to_col = {lbl: i for i, lbl in enumerate(x_labels)}
+    y_label_to_row = {lbl: i for i, lbl in enumerate(y_labels)}
+    
+    n_rows = len(y_labels)
+    n_cols = len(x_labels)
+    
+    # Helper function to expand wildcard keys
+    def get_matching_subplots(subplot_key):
+        """Returns list of actual subplot keys that match the given key (which may contain wildcards)."""
+        x_key, y_key = subplot_key
+        matching = []
+        
+        for x_label in x_labels:
+            for y_label in y_labels:
+                x_match = (x_key == '*' or x_key == x_label)
+                y_match = (y_key == '*' or y_key == y_label)
+                if x_match and y_match:
+                    matching.append((x_label, y_label))
+        
+        return matching
+    
+    # Create subplot grid
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows), squeeze=False)
+    
+    # Plot each subplot
+    for x_label in x_labels:
+        for y_label in y_labels:
+            row = y_label_to_row[y_label]
+            col = x_label_to_col[x_label]
+            ax = axes[row][col]
+            
+            # Get data for this specific subplot
+            subplot_step_series = step_series.get((x_label, y_label), {})
+            
+            # Collect markers from all matching wildcard patterns
+            subplot_markers = []
+            subplot_vertical_lines = []
+            subplot_horizontal_lines = []
+            subplot_xy_crosshairs = []
+            
+            # Check all marker keys to see if they apply to this subplot
+            for marker_key, marker_list in markers.items():
+                if (x_label, y_label) in get_matching_subplots(marker_key):
+                    subplot_markers.extend(marker_list)
+            
+            for vline_key, vline_list in vertical_lines.items():
+                if (x_label, y_label) in get_matching_subplots(vline_key):
+                    subplot_vertical_lines.extend(vline_list)
+            
+            for hline_key, hline_list in horizontal_lines.items():
+                if (x_label, y_label) in get_matching_subplots(hline_key):
+                    subplot_horizontal_lines.extend(hline_list)
+            
+            for xy_key, xy_list in xy_crosshairs.items():
+                if (x_label, y_label) in get_matching_subplots(xy_key):
+                    subplot_xy_crosshairs.extend(xy_list)
+            
+            # Plot step series
+            colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
+            idx = 0
+            any_x_vals = []
+            any_y_vals = []
+            
+            for lbl, points in subplot_step_series.items():
+                pts_x = [p[0] for p in points]
+                pts_y = [p[1] for p in points]
+                any_x_vals.extend(pts_x)
+                any_y_vals.extend(pts_y)
+                color = colors[idx % len(colors)] if colors else None
+                ax.step(pts_x, pts_y, where='post', color=color, label=lbl)
+                ax.scatter(pts_x, pts_y, marker='x', color=color, s=6, linewidths=0.6)
+                idx += 1
+            
+            # Draw y = x diagonal if we have data
+            if any_x_vals and any_y_vals:
+                xmin = min(any_x_vals)
+                xmax = max(any_x_vals)
+                ymin = min(any_y_vals)
+                ymax = max(any_y_vals)
+                lo = min(xmin, ymin)
+                hi = max(xmax, ymax)
+                ax.plot([lo, hi], [lo, hi], linestyle='--', color='gray', linewidth=0.5, alpha=0.8, label='y = x')
+            
+            # Draw markers
+            for marker in subplot_markers:
+                ax.axvline(x=marker, linestyle='--', color='black', linewidth=0.4, alpha=0.6)
+                ax.axhline(y=marker, linestyle='--', color='black', linewidth=0.4, alpha=0.6)
+            
+            # Draw vertical lines
+            for vx, lbl in subplot_vertical_lines:
+                ax.axvline(x=vx, linestyle='--', color='magenta', linewidth=0.4, alpha=0.6)
+                ax.text(vx, 0.98, lbl, transform=ax.get_xaxis_transform(), rotation=90,
+                        va='top', ha='right', color='magenta', fontsize=7)
+            
+            # Draw horizontal lines
+            for hy, lbl in subplot_horizontal_lines:
+                ax.axhline(y=hy, linestyle='--', color='cyan', linewidth=0.4, alpha=0.6)
+                ax.text(0.02, hy, lbl, transform=ax.get_yaxis_transform(),
+                        va='bottom', ha='left', color='cyan', fontsize=7)
+            
+            # Draw xy crosshairs
+            for vx, hy, lbl in subplot_xy_crosshairs:
+                ax.axvline(x=vx, linestyle='--', color='red', linewidth=0.6, alpha=0.7)
+                ax.axhline(y=hy, linestyle='--', color='red', linewidth=0.6, alpha=0.7)
+                ax.annotate(lbl, xy=(vx, hy), xytext=(5, 5), textcoords='offset points',
+                           color='red', fontsize=8, fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7, edgecolor='red'))
+        
+        # Set subplot title showing x and y labels
+        title_parts = []
+        if x_label:
+            title_parts.append(f"x:{x_label}")
+        if y_label:
+            title_parts.append(f"y:{y_label}")
+        if title_parts:
+            ax.set_title(' '.join(title_parts))
+        else:
+            ax.set_title('default')
+        
+        ax.legend(fontsize=7)
+        ax.grid(True)
+    
+    # Align axes for subplots in same column/row if requested
+    if align_axes and n_rows > 0 and n_cols > 0:
+        # Align x-axis for each column
+        for col_idx, x_label in enumerate(x_labels):
+            col_axes = [axes[row][col_idx] for row in range(n_rows)]
+            # Collect all x limits from this column
+            x_mins = []
+            x_maxs = []
+            for ax in col_axes:
+                xlim = ax.get_xlim()
+                x_mins.append(xlim[0])
+                x_maxs.append(xlim[1])
+            if x_mins and x_maxs:
+                unified_xlim = (min(x_mins), max(x_maxs))
+                for ax in col_axes:
+                    ax.set_xlim(unified_xlim)
+        
+        # Align y-axis for each row
+        for row_idx, y_label in enumerate(y_labels):
+            row_axes = [axes[row_idx][col] for col in range(n_cols)]
+            # Collect all y limits from this row
+            y_mins = []
+            y_maxs = []
+            for ax in row_axes:
+                ylim = ax.get_ylim()
+                y_mins.append(ylim[0])
+                y_maxs.append(ylim[1])
+            if y_mins and y_maxs:
+                unified_ylim = (min(y_mins), max(y_maxs))
+                for ax in row_axes:
+                    ax.set_ylim(unified_ylim)
+    
+    fig.tight_layout()
+
+    if out_file:
+        fig.savefig(out_file, bbox_inches='tight')
+        print(f"Saved plot to {out_file}")
+
+    if show:
+        plt.show()
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Generic XY curve plotter for log data')
+    parser.add_argument('logfile', help='Log file to parse')
+    parser.add_argument('--out', '-o', help='Output file (PNG, SVG, PDF, etc. - format determined by extension)')
+    parser.add_argument('--no-show', action='store_true', help="Don't display interactive window")
+    parser.add_argument('--no-align-axes', action='store_true', help="Don't align axes for subplots in same column/row")
+
+    args = parser.parse_args()
+
+    path = Path(args.logfile)
+    if not path.exists():
+        print(f"Log file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    # ticks_mode removed
+    data = parse_log(path)
+
+    # if not data['time_ms']:
+    #     print('No matching [A] lines found in log.', file=sys.stderr)
+    #     sys.exit(1)
+
+    plot_data(data, out_file=args.out, show=not args.no_show, align_axes=not args.no_align_axes)
+
+
+if __name__ == '__main__':
+    main()
