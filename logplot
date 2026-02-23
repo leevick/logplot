@@ -281,7 +281,10 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
     
     # Create subplot grid
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows), squeeze=False)
-    
+
+    # Actual data extents collected during plotting: (row, col) -> (x_vals, y_vals)
+    subplot_data_ranges = {}
+
     # Plot each subplot
     for x_label in x_labels:
         for y_label in y_labels:
@@ -330,7 +333,10 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
                 ax.step(pts_x, pts_y, where='post', color=color, label=lbl)
                 ax.scatter(pts_x, pts_y, marker='x', color=color, s=6, linewidths=0.6)
                 idx += 1
-            
+
+            # Record actual data extents for this subplot
+            subplot_data_ranges[(row, col)] = (list(any_x_vals), list(any_y_vals))
+
             # Draw y = x diagonal if we have data
             if any_x_vals and any_y_vals:
                 xmin = min(any_x_vals)
@@ -381,36 +387,33 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
             ax.grid(True)
     
     # Align axes for subplots in same column/row if requested
+    AXIS_MARGIN = 0.05  # 5 % whitespace padding on each side
     if align_axes and n_rows > 0 and n_cols > 0:
-        # Align x-axis for each column
-        for col_idx, x_label in enumerate(x_labels):
-            col_axes = [axes[row][col_idx] for row in range(n_rows)]
-            # Collect all x limits from this column
-            x_mins = []
-            x_maxs = []
-            for ax in col_axes:
-                xlim = ax.get_xlim()
-                x_mins.append(xlim[0])
-                x_maxs.append(xlim[1])
-            if x_mins and x_maxs:
-                unified_xlim = (min(x_mins), max(x_maxs))
-                for ax in col_axes:
-                    ax.set_xlim(unified_xlim)
-        
-        # Align y-axis for each row
-        for row_idx, y_label in enumerate(y_labels):
-            row_axes = [axes[row_idx][col] for col in range(n_cols)]
-            # Collect all y limits from this row
-            y_mins = []
-            y_maxs = []
-            for ax in row_axes:
-                ylim = ax.get_ylim()
-                y_mins.append(ylim[0])
-                y_maxs.append(ylim[1])
-            if y_mins and y_maxs:
-                unified_ylim = (min(y_mins), max(y_maxs))
-                for ax in row_axes:
-                    ax.set_ylim(unified_ylim)
+        # Align x-axis for each column using the actual data range across all rows
+        for col_idx in range(n_cols):
+            all_x = []
+            for row_idx in range(n_rows):
+                xs, _ys = subplot_data_ranges.get((row_idx, col_idx), ([], []))
+                all_x.extend(xs)
+            if all_x:
+                x_span = max(all_x) - min(all_x)
+                pad = x_span * AXIS_MARGIN if x_span else 1
+                unified_xlim = (min(all_x) - pad, max(all_x) + pad)
+                for row_idx in range(n_rows):
+                    axes[row_idx][col_idx].set_xlim(unified_xlim)
+
+        # Align y-axis for each row using the actual data range across all columns
+        for row_idx in range(n_rows):
+            all_y = []
+            for col_idx in range(n_cols):
+                _xs, ys = subplot_data_ranges.get((row_idx, col_idx), ([], []))
+                all_y.extend(ys)
+            if all_y:
+                y_span = max(all_y) - min(all_y)
+                pad = y_span * AXIS_MARGIN if y_span else 1
+                unified_ylim = (min(all_y) - pad, max(all_y) + pad)
+                for col_idx in range(n_cols):
+                    axes[row_idx][col_idx].set_ylim(unified_ylim)
     
     fig.tight_layout()
 
