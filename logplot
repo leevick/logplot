@@ -224,8 +224,38 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
         print("No data to plot")
         return
     
-    x_labels = sorted(set(k[0] for k in grid_keys))
-    y_labels = sorted(set(k[1] for k in grid_keys))
+    all_x_labels = sorted(set(k[0] for k in grid_keys))
+    all_y_labels = sorted(set(k[1] for k in grid_keys))
+    
+    # Filter out rows and columns that have no data
+    # A row has data if any subplot in that row has data
+    # A column has data if any subplot in that column has data
+    rows_with_data = set()
+    cols_with_data = set()
+    
+    for (x_label, y_label), series_data in step_series.items():
+        if '*' in (x_label, y_label):
+            continue
+        if series_data:  # Only count if there's actual data
+            rows_with_data.add(y_label)
+            cols_with_data.add(x_label)
+    
+    # Also check for markers, lines, and crosshairs
+    for data_dict in [markers, vertical_lines, horizontal_lines, xy_crosshairs]:
+        for (x_label, y_label), items in data_dict.items():
+            if '*' in (x_label, y_label):
+                continue
+            if items:  # Only count if there are items
+                rows_with_data.add(y_label)
+                cols_with_data.add(x_label)
+    
+    # Filter labels to only those with data
+    x_labels = [lbl for lbl in all_x_labels if lbl in cols_with_data]
+    y_labels = [lbl for lbl in all_y_labels if lbl in rows_with_data]
+    
+    if not x_labels or not y_labels:
+        print("No data to plot")
+        return
     
     # Create mapping from label to index
     x_label_to_col = {lbl: i for i, lbl in enumerate(x_labels)}
