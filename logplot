@@ -365,20 +365,20 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
                 ax.annotate(lbl, xy=(vx, hy), xytext=(5, 5), textcoords='offset points',
                            color='red', fontsize=8, fontweight='bold',
                            bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7, edgecolor='red'))
-        
-        # Set subplot title showing x and y labels
-        title_parts = []
-        if x_label:
-            title_parts.append(f"x:{x_label}")
-        if y_label:
-            title_parts.append(f"y:{y_label}")
-        if title_parts:
-            ax.set_title(' '.join(title_parts))
-        else:
-            ax.set_title('default')
-        
-        ax.legend(fontsize=7)
-        ax.grid(True)
+
+            # Set subplot title showing x and y labels
+            title_parts = []
+            if x_label:
+                title_parts.append(f"x:{x_label}")
+            if y_label:
+                title_parts.append(f"y:{y_label}")
+            if title_parts:
+                ax.set_title(' '.join(title_parts))
+            else:
+                ax.set_title('default')
+
+            ax.legend(fontsize=7)
+            ax.grid(True)
     
     # Align axes for subplots in same column/row if requested
     if align_axes and n_rows > 0 and n_cols > 0:
