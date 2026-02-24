@@ -334,8 +334,10 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
                 ax.scatter(pts_x, pts_y, marker='x', color=color, s=6, linewidths=0.6)
                 idx += 1
 
-            # Record actual data extents for this subplot
-            subplot_data_ranges[(row, col)] = (list(any_x_vals), list(any_y_vals))
+            # Record actual data extents for this subplot (include all line/crosshair positions)
+            all_x_for_range = list(any_x_vals) + [vx for vx, _lbl in subplot_vertical_lines] + [vx for vx, _hy, _lbl in subplot_xy_crosshairs]
+            all_y_for_range = list(any_y_vals) + [hy for hy, _lbl in subplot_horizontal_lines] + [hy for _vx, hy, _lbl in subplot_xy_crosshairs]
+            subplot_data_ranges[(row, col)] = (all_x_for_range, all_y_for_range)
 
             # Draw y = x diagonal if we have data
             if any_x_vals and any_y_vals:
