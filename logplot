@@ -2,15 +2,20 @@
 """Generic XY plotter for logs.
 
 Parses generic log lines of the form:
-    [label] 0xX 0xY  (hexadecimal with mandatory lowercase 0x prefix)
-    [label] xy 0xX 0xY  (draws crossing vertical and horizontal lines at X and Y)
+    [label] X Y  (values can be hex: 0xABCD, integers: -1, +1, 0, or floats: -0.1, +0.1, 0.0)
+    [label] xy X Y  (draws crossing vertical and horizontal lines at X and Y)
 and marker lines with subplot support:
-    [label] x 0xX           - vertical line in default subplot
-    <x1>[label] x 0xX       - vertical line in x1 column, default row
-    <x1>[label]<y1> x 0xX   - vertical line in specific x1,y1 subplot
-    <x1>[label]<> x 0xX     - vertical line across all subplots in x1 column
+    [label] x X             - vertical line in default subplot
+    <x1>[label] x X         - vertical line in x1 column, default row
+    <x1>[label]<y1> x X     - vertical line in specific x1,y1 subplot
+    <x1>[label]<> x X       - vertical line across all subplots in x1 column
     
     Similar syntax for horizontal lines (y) and crosshairs (xy)
+    
+Value formats supported:
+    - Hexadecimal: 0xabcd, 0x00abcd (case-insensitive)
+    - Signed integers: 0, -1, +1
+    - Signed floats: 0.0, -0.1, +0.1, -0.0, +0.0
 
 Supports subplot organization using optional tags:
     <x_label>[label1][label2]<y_label> 0xX 0xY1 0xY2
@@ -38,15 +43,40 @@ except Exception as e:
     raise
 
 
-MARKER_RE = re.compile(r"\[A\]\s+MARK\s+0x([0-9A-Fa-f]+)")
+# Number pattern: supports hex (0xABCD), signed integers (+1, -1, 0), and floats (+0.1, -0.1, 0.0)
+NUM_PATTERN = r"(?:[+-]?(?:\d+\.\d+|\d+)|0x[0-9A-Fa-f]+)"
+
+def parse_value(val_str):
+    """Parse a value string that can be hex, integer, or float.
+    
+    Supports:
+    - Hexadecimal: 0xabcd, 0x00abcd
+    - Integers: 0, -1, +1
+    - Floats: 0.0, -0.1, +0.1
+    """
+    val_str = val_str.strip()
+    
+    # Check for hexadecimal
+    if val_str.startswith('0x') or val_str.startswith('0X'):
+        return int(val_str, 16)
+    
+    # Check for float (contains decimal point)
+    if '.' in val_str:
+        return float(val_str)
+    
+    # Integer
+    return int(val_str)
+
+
+MARKER_RE = re.compile(rf"\[A\]\s+MARK\s+({NUM_PATTERN})")
 
 # Generic patterns with optional subplot tags:
 # Supports: <x_label>[label]<y_label> x/y/xy value
 # Use <> for wildcard (apply to all subplots in that dimension)
-VERTICAL_RE = re.compile(r"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s*x\s*0x(?P<val>[0-9A-Fa-f]+)")
-HORIZONTAL_RE = re.compile(r"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s*y\s*0x(?P<val>[0-9A-Fa-f]+)")
-XY_RE = re.compile(r"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s+xy\s+0x(?P<x>[0-9A-Fa-f]+)\s+0x(?P<y>[0-9A-Fa-f]+)")
-STEP_RE = re.compile(r"\[(?P<label>[A-Za-z0-9_]+)\]\s+0x(?P<x>[0-9A-Fa-f]+)\s+0x(?P<y>[0-9A-Fa-f]+)")
+VERTICAL_RE = re.compile(rf"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s*x\s*(?P<val>{NUM_PATTERN})")
+HORIZONTAL_RE = re.compile(rf"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s*y\s*(?P<val>{NUM_PATTERN})")
+XY_RE = re.compile(rf"(?:<(?P<xlabel>[A-Za-z0-9_]*)>)?\[(?P<label>[A-Za-z0-9_]+)\](?:<(?P<ylabel>[A-Za-z0-9_]*)>)?\s+xy\s+(?P<x>{NUM_PATTERN})\s+(?P<y>{NUM_PATTERN})")
+STEP_RE = re.compile(rf"\[(?P<label>[A-Za-z0-9_]+)\]\s+(?P<x>{NUM_PATTERN})\s+(?P<y>{NUM_PATTERN})")
 
 
 def extract_subplot_labels(match, line):
@@ -88,78 +118,78 @@ def parse_log(path):
             mm = MARKER_RE.search(line)
             if mm:
                 marker_s = mm.group(1)
-                if marker_s.lower() not in {"ffffffff", "ffffffffffffffff"}:
+                # Skip sentinel hex values
+                if marker_s.lower() not in {"0xffffffff", "0xffffffffffffffff"}:
                     try:
-                        marker_h = int(marker_s, 16)
+                        marker_val = parse_value(marker_s)
                         subplot_key = ('', '')
-                        markers.setdefault(subplot_key, []).append(marker_h)
+                        markers.setdefault(subplot_key, []).append(marker_val)
                     except ValueError:
                         pass
                 continue
 
-            # Vertical single-value entries with subplot tags: <x_label>[label]<y_label> x 0xHEX
+            # Vertical single-value entries with subplot tags: <x_label>[label]<y_label> x VALUE
             vm = VERTICAL_RE.search(line)
             if vm:
                 lbl = vm.group('label')
                 val_s = vm.group('val')
                 subplot_key = extract_subplot_labels(vm, line)
-                if val_s.lower() not in {"ffffffff", "ffffffffffffffff"}:
+                # Skip sentinel hex values
+                if val_s.lower() not in {"0xffffffff", "0xffffffffffffffff"}:
                     try:
-                        v = int(val_s, 16)
-                        v_val = v
+                        v_val = parse_value(val_s)
                         vertical_lines.setdefault(subplot_key, []).append((v_val, lbl))
                     except ValueError:
                         pass
                 continue
 
-            # Horizontal single-value entries with subplot tags: <x_label>[label]<y_label> y 0xHEX
+            # Horizontal single-value entries with subplot tags: <x_label>[label]<y_label> y VALUE
             hm = HORIZONTAL_RE.search(line)
             if hm:
                 lbl = hm.group('label')
                 val_s = hm.group('val')
                 subplot_key = extract_subplot_labels(hm, line)
-                if val_s.lower() not in {"ffffffff", "ffffffffffffffff"}:
+                # Skip sentinel hex values
+                if val_s.lower() not in {"0xffffffff", "0xffffffffffffffff"}:
                     try:
-                        v = int(val_s, 16)
-                        v_val = v
+                        v_val = parse_value(val_s)
                         horizontal_lines.setdefault(subplot_key, []).append((v_val, lbl))
                     except ValueError:
                         pass
                 continue
 
-            # XY point entries with subplot tags: <x_label>[label]<y_label> xy 0xX 0xY
+            # XY point entries with subplot tags: <x_label>[label]<y_label> xy X Y
             xym = XY_RE.search(line)
             if xym:
                 lbl = xym.group('label')
                 x_s = xym.group('x')
                 y_s = xym.group('y')
                 subplot_key = extract_subplot_labels(xym, line)
-                if x_s.lower() in {"ffffffff", "ffffffffffffffff"} or y_s.lower() in {"ffffffffffffffff"}:
+                # Skip sentinel hex values
+                if x_s.lower() in {"0xffffffff", "0xffffffffffffffff"} or y_s.lower() in {"0xffffffffffffffff"}:
                     continue
                 try:
-                    x_h = int(x_s, 16)
-                    y_h = int(y_s, 16)
-                    x_val = x_h
-                    y_val = y_h
+                    x_val = parse_value(x_s)
+                    y_val = parse_value(y_s)
                     xy_crosshairs.setdefault(subplot_key, []).append((x_val, y_val, lbl))
                 except ValueError:
                     pass
                 continue
 
-            # Multi-label lines with optional subplot tags: <x_label>[lbl1][lbl2]<y_label> 0xX 0xY1 0xY2 ...
-            # Pattern: optional <x_label>, one or more [label], optional <y_label>, then hex values
-            ml_match = re.match(r'(?:<(?P<xlabel>[A-Za-z0-9_]+)>)?((?:\[[A-Za-z0-9_]+\])+)(?:<(?P<ylabel>[A-Za-z0-9_]+)>)?(?:\s+0x[0-9A-Fa-f]+)+', line)
+            # Multi-label lines with optional subplot tags: <x_label>[lbl1][lbl2]<y_label> X Y1 Y2 ...
+            # Pattern: optional <x_label>, one or more [label], optional <y_label>, then values
+            ml_match = re.match(rf'(?:<(?P<xlabel>[A-Za-z0-9_]+)>)?((?:\[[A-Za-z0-9_]+\])+)(?:<(?P<ylabel>[A-Za-z0-9_]+)>)?(?:\s+{NUM_PATTERN})+', line)
             if ml_match:
                 x_label = ml_match.group('xlabel') or ''  # default subplot
                 y_label = ml_match.group('ylabel') or ''  # default subplot
                 subplot_key = (x_label, y_label)
                 
                 labels = re.findall(r'\[([A-Za-z0-9_]+)\]', ml_match.group(2))
-                hexs = re.findall(r'0x([0-9A-Fa-f]+)', line)
-                if len(hexs) >= 2 and labels:
-                    x_s = hexs[0]
-                    ys_s = hexs[1:]
-                    sentinels = {"ffffffff", "ffffffffffffffff"}
+                values = re.findall(NUM_PATTERN, line)
+                if len(values) >= 2 and labels:
+                    x_s = values[0]
+                    ys_s = values[1:]
+                    sentinels = {"0xffffffff", "0xffffffffffffffff"}
                     count = min(len(labels), len(ys_s))
                     for i in range(count):
                         lbl = labels[i]
@@ -167,10 +197,8 @@ def parse_log(path):
                         if x_s.lower() in sentinels or y_s.lower() in sentinels:
                             continue
                         try:
-                            x_h = int(x_s, 16)
-                            y_h = int(y_s, 16)
-                            x_val = x_h
-                            y_val = y_h
+                            x_val = parse_value(x_s)
+                            y_val = parse_value(y_s)
                             if subplot_key not in step_series:
                                 step_series[subplot_key] = {}
                             step_series[subplot_key].setdefault(lbl, []).append((x_val, y_val))
@@ -178,19 +206,18 @@ def parse_log(path):
                             continue
                     continue
 
-            # Step-style entries: [label] 0xX 0xY (default subplot)
+            # Step-style entries: [label] X Y (default subplot)
             sm = STEP_RE.search(line)
             if sm:
                 lbl = sm.group('label')
                 x_s = sm.group('x')
                 y_s = sm.group('y')
-                if x_s.lower() in {"ffffffff", "ffffffffffffffff"} or y_s.lower() in {"ffffffffffffffff"}:
+                # Skip sentinel hex values
+                if x_s.lower() in {"0xffffffff", "0xffffffffffffffff"} or y_s.lower() in {"0xffffffffffffffff"}:
                     continue
                 try:
-                    x_h = int(x_s, 16)
-                    y_h = int(y_s, 16)
-                    x_val = x_h
-                    y_val = y_h
+                    x_val = parse_value(x_s)
+                    y_val = parse_value(y_s)
                     subplot_key = ('', '')
                     if subplot_key not in step_series:
                         step_series[subplot_key] = {}
