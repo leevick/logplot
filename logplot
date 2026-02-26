@@ -32,19 +32,22 @@ It groups step pairs by `label` and plots X on the horizontal axis and Y on the 
 Usage: logplot /path/to/logfile
 """
 import re
+import os
 import sys
 import argparse
 from pathlib import Path
 
 try:
     import matplotlib.pyplot as plt
+    import numpy as np
 except Exception as e:
-    print("matplotlib is required: pip install matplotlib", file=sys.stderr)
+    print("matplotlib and numpy are required: pip install matplotlib numpy", file=sys.stderr)
     raise
 
 
 # Number pattern: supports hex (0xABCD), signed integers (+1, -1, 0), and floats (+0.1, -0.1, 0.0)
-NUM_PATTERN = r"(?:[+-]?(?:\d+\.\d+|\d+)|0x[0-9A-Fa-f]+)"
+# IMPORTANT: hex alternative must come first so "0x..." is not consumed as plain integer "0"
+NUM_PATTERN = r"(?:0x[0-9A-Fa-f]+|[+-]?(?:\d+\.\d+|\d+))"
 
 def parse_value(val_str):
     """Parse a value string that can be hex, integer, or float.
@@ -233,6 +236,118 @@ def parse_log(path):
         'xy_crosshairs': xy_crosshairs,
         'markers': markers,
     }
+
+
+def plot_histograms(data, out_file=None, show=True):
+    """Plot normalized histograms of Y values for each subplot.
+    
+    Histograms are drawn as curves (line plots) with normalized heights summing to 1.
+    Each label gets its own curve with consistent colors from the main plot.
+    """
+    step_series = data.get('step_series', {})
+
+    # Determine unique x and y labels to create subplot grid (exclude wildcards)
+    all_keys = set(step_series.keys())
+    grid_keys = {k for k in all_keys if '*' not in k}
+    
+    if not grid_keys:
+        print("No data to plot")
+        return
+    
+    all_x_labels = sorted(set(k[0] for k in grid_keys))
+    all_y_labels = sorted(set(k[1] for k in grid_keys))
+    
+    # Filter out rows and columns that have no data
+    rows_with_data = set()
+    cols_with_data = set()
+    
+    for (x_label, y_label), series_data in step_series.items():
+        if '*' in (x_label, y_label):
+            continue
+        if series_data:
+            rows_with_data.add(y_label)
+            cols_with_data.add(x_label)
+    
+    x_labels = [lbl for lbl in all_x_labels if lbl in cols_with_data]
+    y_labels = [lbl for lbl in all_y_labels if lbl in rows_with_data]
+    
+    if not x_labels or not y_labels:
+        print("No data to plot")
+        return
+    
+    x_label_to_col = {lbl: i for i, lbl in enumerate(x_labels)}
+    y_label_to_row = {lbl: i for i, lbl in enumerate(y_labels)}
+    
+    n_rows = len(y_labels)
+    n_cols = len(x_labels)
+    
+    # Create subplot grid
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows), squeeze=False)
+
+    # Plot histogram for each subplot
+    for x_label in x_labels:
+        for y_label in y_labels:
+            row = y_label_to_row[y_label]
+            col = x_label_to_col[x_label]
+            ax = axes[row][col]
+            
+            # Get data for this specific subplot
+            subplot_step_series = step_series.get((x_label, y_label), {})
+            
+            if not subplot_step_series:
+                continue
+            
+            # Use same color scheme as main plot
+            colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
+            idx = 0
+            
+            for lbl, points in subplot_step_series.items():
+                # Extract Y values only
+                y_vals = [p[1] for p in points]
+                
+                if not y_vals:
+                    continue
+                
+                color = colors[idx % len(colors)] if colors else None
+                
+                # Compute histogram with automatic binning
+                counts, bin_edges = np.histogram(y_vals, bins='auto')
+                
+                # Normalize to sum to 1 (probability distribution)
+                counts_normalized = counts / counts.sum()
+                
+                # Use bin centers for plotting
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                
+                # Plot as curve
+                ax.plot(bin_centers, counts_normalized, color=color, label=lbl, linewidth=1.5)
+                ax.fill_between(bin_centers, counts_normalized, alpha=0.2, color=color)
+                
+                idx += 1
+            
+            # Set subplot title
+            title_parts = []
+            if x_label:
+                title_parts.append(f"x:{x_label}")
+            if y_label:
+                title_parts.append(f"y:{y_label}")
+            if title_parts:
+                ax.set_title(' '.join(title_parts))
+            else:
+                ax.set_title('default')
+            
+            ax.set_xlabel('Y Value')
+            ax.set_ylabel('Normalized Frequency')
+            ax.legend(fontsize=7)
+            ax.grid(True, alpha=0.3)
+    
+    fig.tight_layout()
+
+    if out_file:
+        fig.savefig(out_file, bbox_inches='tight')
+        print(f"Saved histogram plot to {out_file}")
+
+    return fig
 
 
 def plot_data(data, out_file=None, show=True, align_axes=True):
@@ -450,8 +565,7 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
         fig.savefig(out_file, bbox_inches='tight')
         print(f"Saved plot to {out_file}")
 
-    if show:
-        plt.show()
+    return fig
 
 
 def main():
@@ -460,6 +574,7 @@ def main():
     parser.add_argument('--out', '-o', help='Output file (PNG, SVG, PDF, etc. - format determined by extension)')
     parser.add_argument('--no-show', action='store_true', help="Don't display interactive window")
     parser.add_argument('--no-align-axes', action='store_true', help="Don't align axes for subplots in same column/row")
+    parser.add_argument('--histo', action='store_true', help='Also plot normalized histograms of Y values in a separate figure')
 
     args = parser.parse_args()
 
@@ -475,7 +590,27 @@ def main():
     #     print('No matching [A] lines found in log.', file=sys.stderr)
     #     sys.exit(1)
 
-    plot_data(data, out_file=args.out, show=not args.no_show, align_axes=not args.no_align_axes)
+    # Always plot the XY curves
+    fig_xy = plot_data(data, out_file=args.out, show=False, align_axes=not args.no_align_axes)
+    
+    # If histo flag is set, also plot histograms in a separate figure
+    if args.histo:
+        # Modify output filename for histogram if provided
+        histo_out_file = None
+        if args.out:
+            base_name = args.out.rsplit('.', 1)[0]
+            ext = args.out.rsplit('.', 1)[1] if '.' in args.out else 'png'
+            histo_out_file = f"{base_name}_histo.{ext}"
+        plot_histograms(data, out_file=histo_out_file, show=False)
+
+    # Show all figures: fork so child blocks on the GUI and parent returns to shell
+    if not args.no_show:
+        pid = os.fork()
+        if pid == 0:
+            # Child process: run the GUI event loop blocking until all figures are closed
+            plt.show(block=True)
+            os._exit(0)
+        # Parent falls through and exits, returning control to the terminal
 
 
 if __name__ == '__main__':
