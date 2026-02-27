@@ -427,6 +427,9 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
     # Actual data extents collected during plotting: (row, col) -> (x_vals, y_vals)
     subplot_data_ranges = {}
 
+    # Store scatter artists per axes for hover snapping
+    scatter_by_axes = {}
+
     # Plot each subplot
     for x_label in x_labels:
         for y_label in y_labels:
@@ -473,7 +476,8 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
                 any_y_vals.extend(pts_y)
                 color = colors[idx % len(colors)] if colors else None
                 ax.step(pts_x, pts_y, where='post', color=color, label=lbl)
-                ax.scatter(pts_x, pts_y, marker='x', color=color, s=6, linewidths=0.6)
+                scatter = ax.scatter(pts_x, pts_y, marker='x', color=color, s=6, linewidths=0.6, picker=True)
+                scatter_by_axes.setdefault(ax, []).append((scatter, lbl))
                 idx += 1
 
             # Record actual data extents for this subplot (include all line/crosshair positions)
@@ -559,6 +563,37 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
                 for col_idx in range(n_cols):
                     axes[row_idx][col_idx].set_ylim(unified_ylim)
     
+    # Add hover annotation that snaps only to plotted points
+    hover_ann = fig.text(0, 0, '', fontsize=8, color='black',
+                         bbox=dict(boxstyle='round,pad=0.2', facecolor='yellow', alpha=0.8, edgecolor='black'))
+    hover_ann.set_visible(False)
+
+    def on_move(event):
+        if event.inaxes is None:
+            if hover_ann.get_visible():
+                hover_ann.set_visible(False)
+                fig.canvas.draw_idle()
+            return
+
+        ax = event.inaxes
+        artists = scatter_by_axes.get(ax, [])
+        for scatter, lbl in artists:
+            hit, info = scatter.contains(event)
+            if hit and len(info.get('ind', [])):
+                idx = info['ind'][0]
+                x_val, y_val = scatter.get_offsets()[idx]
+                hover_ann.set_text(f"{lbl}: x={x_val}, y={y_val}")
+                hover_ann.set_position((event.x / fig.bbox.width, event.y / fig.bbox.height))
+                hover_ann.set_visible(True)
+                fig.canvas.draw_idle()
+                return
+
+        if hover_ann.get_visible():
+            hover_ann.set_visible(False)
+            fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect('motion_notify_event', on_move)
+
     fig.tight_layout()
 
     if out_file:
