@@ -32,9 +32,9 @@ It groups step pairs by `label` and plots X on the horizontal axis and Y on the 
 Usage: logplot /path/to/logfile
 """
 import re
-import os
 import sys
 import argparse
+import subprocess
 from pathlib import Path
 
 try:
@@ -603,6 +603,17 @@ def plot_data(data, out_file=None, show=True, align_axes=True):
     return fig
 
 
+def spawn_show_process(argv):
+    """Launch a fresh process for interactive display.
+
+    Matplotlib GUI backends are not fork-safe once the interpreter has imported
+    them, so interactive display must happen in a new process rather than via
+    os.fork().
+    """
+    child_argv = [sys.executable, str(Path(__file__).resolve()), '--plot-child', *argv[1:]]
+    subprocess.Popen(child_argv, start_new_session=True, close_fds=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Generic XY curve plotter for log data')
     parser.add_argument('logfile', help='Log file to parse')
@@ -610,6 +621,7 @@ def main():
     parser.add_argument('--no-show', action='store_true', help="Don't display interactive window")
     parser.add_argument('--no-align-axes', action='store_true', help="Don't align axes for subplots in same column/row")
     parser.add_argument('--histo', action='store_true', help='Also plot normalized histograms of Y values in a separate figure')
+    parser.add_argument('--plot-child', action='store_true', help=argparse.SUPPRESS)
 
     args = parser.parse_args()
 
@@ -617,6 +629,10 @@ def main():
     if not path.exists():
         print(f"Log file not found: {path}", file=sys.stderr)
         sys.exit(1)
+
+    if not args.no_show and not args.plot_child:
+        spawn_show_process(sys.argv)
+        return
 
     # ticks_mode removed
     data = parse_log(path)
@@ -638,14 +654,8 @@ def main():
             histo_out_file = f"{base_name}_histo.{ext}"
         plot_histograms(data, out_file=histo_out_file, show=False)
 
-    # Show all figures: fork so child blocks on the GUI and parent returns to shell
     if not args.no_show:
-        pid = os.fork()
-        if pid == 0:
-            # Child process: run the GUI event loop blocking until all figures are closed
-            plt.show(block=True)
-            os._exit(0)
-        # Parent falls through and exits, returning control to the terminal
+        plt.show(block=True)
 
 
 if __name__ == '__main__':
